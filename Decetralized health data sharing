@@ -1,0 +1,210 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.19;
+
+contract Project {
+    // Struct to represent health data
+    struct HealthData {
+        string dataHash; // IPFS hash or encrypted data hash
+        address patient;
+        address authorizedProvider;
+        uint256 timestamp;
+        string dataType; // e.g., "blood_test", "x_ray", "prescription"
+        bool isActive;
+    }
+    
+    // Struct to represent access permissions
+    struct AccessPermission {
+        address requester;
+        address patient;
+        uint256 expiryTime;
+        bool isGranted;
+        string purpose; // reason for access request
+    }
+    
+    // Mappings
+    mapping(uint256 => HealthData) public healthRecords;
+    mapping(address => uint256[]) public patientRecords; // patient -> record IDs
+    mapping(uint256 => AccessPermission) public accessRequests;
+    mapping(address => bool) public authorizedProviders;
+    
+    // Counters
+    uint256 public recordCounter;
+    uint256 public accessRequestCounter;
+    
+    // Events
+    event HealthDataStored(uint256 indexed recordId, address indexed patient, address indexed provider, string dataType);
+    event AccessRequested(uint256 indexed requestId, address indexed requester, address indexed patient, string purpose);
+    event AccessGranted(uint256 indexed requestId, address indexed patient, address indexed requester);
+    event AccessRevoked(uint256 indexed requestId, address indexed patient, address indexed requester);
+    
+    // Modifiers
+    modifier onlyPatient(uint256 recordId) {
+        require(healthRecords[recordId].patient == msg.sender, "Only patient can perform this action");
+        _;
+    }
+    
+    modifier onlyAuthorizedProvider() {
+        require(authorizedProviders[msg.sender], "Only authorized healthcare providers allowed");
+        _;
+    }
+    
+    constructor() {
+        // Contract deployer becomes the first authorized provider
+        authorizedProviders[msg.sender] = true;
+    }
+    
+    /**
+     * @dev Core Function 1: Store health data on blockchain
+     * @param _patient Address of the patient
+     * @param _dataHash Hash of the encrypted health data (stored off-chain)
+     * @param _dataType Type of health data (e.g., "blood_test", "x_ray")
+     */
+    function storeHealthData(
+        address _patient,
+        string memory _dataHash,
+        string memory _dataType
+    ) external onlyAuthorizedProvider returns (uint256) {
+        require(_patient != address(0), "Invalid patient address");
+        require(bytes(_dataHash).length > 0, "Data hash cannot be empty");
+        require(bytes(_dataType).length > 0, "Data type cannot be empty");
+        
+        recordCounter++;
+        
+        healthRecords[recordCounter] = HealthData({
+            dataHash: _dataHash,
+            patient: _patient,
+            authorizedProvider: msg.sender,
+            timestamp: block.timestamp,
+            dataType: _dataType,
+            isActive: true
+        });
+        
+        patientRecords[_patient].push(recordCounter);
+        
+        emit HealthDataStored(recordCounter, _patient, msg.sender, _dataType);
+        
+        return recordCounter;
+    }
+    
+    /**
+     * @dev Core Function 2: Request access to patient's health data
+     * @param _patient Address of the patient whose data is being requested
+     * @param _purpose Purpose/reason for requesting access
+     * @param _duration Duration of access in seconds
+     */
+    function requestDataAccess(
+        address _patient,
+        string memory _purpose,
+        uint256 _duration
+    ) external returns (uint256) {
+        require(_patient != address(0), "Invalid patient address");
+        require(_patient != msg.sender, "Cannot request access to own data");
+        require(bytes(_purpose).length > 0, "Purpose cannot be empty");
+        require(_duration > 0 && _duration <= 365 days, "Invalid duration");
+        
+        accessRequestCounter++;
+        
+        accessRequests[accessRequestCounter] = AccessPermission({
+            requester: msg.sender,
+            patient: _patient,
+            expiryTime: block.timestamp + _duration,
+            isGranted: false,
+            purpose: _purpose
+        });
+        
+        emit AccessRequested(accessRequestCounter, msg.sender, _patient, _purpose);
+        
+        return accessRequestCounter;
+    }
+    
+    /**
+     * @dev Core Function 3: Grant or revoke access to health data
+     * @param _requestId ID of the access request
+     * @param _grant True to grant access, false to revoke
+     */
+    function manageDataAccess(uint256 _requestId, bool _grant) external {
+        AccessPermission storage request = accessRequests[_requestId];
+        require(request.patient == msg.sender, "Only patient can manage access to their data");
+        require(request.requester != address(0), "Invalid request");
+        
+        if (_grant) {
+            require(!request.isGranted, "Access already granted");
+            require(block.timestamp < request.expiryTime, "Request has expired");
+            
+            request.isGranted = true;
+            emit AccessGranted(_requestId, msg.sender, request.requester);
+        } else {
+            require(request.isGranted, "Access not granted yet");
+            
+            request.isGranted = false;
+            emit AccessRevoked(_requestId, msg.sender, request.requester);
+        }
+    }
+    
+    // Additional utility functions
+    
+    /**
+     * @dev Add authorized healthcare provider (only contract owner)
+     */
+    function addAuthorizedProvider(address _provider) external {
+        require(authorizedProviders[msg.sender], "Only authorized providers can add new providers");
+        require(_provider != address(0), "Invalid provider address");
+        
+        authorizedProviders[_provider] = true;
+    }
+    
+    /**
+     * @dev Get patient's health record IDs
+     */
+    function getPatientRecords(address _patient) external view returns (uint256[] memory) {
+        return patientRecords[_patient];
+    }
+    
+    /**
+     * @dev Check if requester has valid access to patient's data
+     */
+    function hasValidAccess(uint256 _requestId) external view returns (bool) {
+        AccessPermission memory request = accessRequests[_requestId];
+        return request.isGranted && block.timestamp < request.expiryTime;
+    }
+    
+    /**
+     * @dev Get health data (only accessible by patient or authorized requester)
+     */
+    function getHealthData(uint256 _recordId, uint256 _accessRequestId) 
+        external 
+        view 
+        returns (
+            string memory dataHash,
+            address patient,
+            address provider,
+            uint256 timestamp,
+            string memory dataType
+        ) 
+    {
+        HealthData memory record = healthRecords[_recordId];
+        require(record.isActive, "Record is not active");
+        
+        // Check if caller is the patient or has valid access
+        bool isPatient = (record.patient == msg.sender);
+        bool hasAccess = false;
+        
+        if (!isPatient && _accessRequestId > 0) {
+            AccessPermission memory accessReq = accessRequests[_accessRequestId];
+            hasAccess = (accessReq.requester == msg.sender && 
+                        accessReq.patient == record.patient && 
+                        accessReq.isGranted && 
+                        block.timestamp < accessReq.expiryTime);
+        }
+        
+        require(isPatient || hasAccess, "No permission to access this data");
+        
+        return (
+            record.dataHash,
+            record.patient,
+            record.authorizedProvider,
+            record.timestamp,
+            record.dataType
+        );
+    }
+}
