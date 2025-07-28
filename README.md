@@ -112,3 +112,5 @@ We envision a future where patients no longer need to carry physical medical rec
 **Note**: This project is designed for educational and development purposes. Before deploying to mainnet or handling real health data, ensure proper security audits, legal compliance reviews, and regulatory approvals are obtained.
 
 contact adress:0xC9B122C2cF7Fd35294c456e68EdBf05F1d3CEF58
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/2ed97526-f270-4ec9-b7a8-38dc2e43b603" />
+
